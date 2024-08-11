@@ -93,6 +93,7 @@ class Learndash_Reporting {
 
         global $wpdb;
 
+        $user_id = get_current_user_id();
         $group_name = isset( $_POST['group_name'] ) ? str_replace( ' ', '-', $_POST['group_name'] ) : '';        
 
         $pattern = '%'.$group_name.'%';
@@ -107,6 +108,10 @@ class Learndash_Reporting {
         if( ! empty( $results ) && is_array( $results ) ) {
             foreach( $results as $group_id ) {
                 $group_id = intval( $group_id );
+                $user_is_group_leader = get_user_meta( $user_id, 'learndash_group_leaders_'.$group_id, true );
+                if( ! $user_is_group_leader ) {
+                    continue;
+                }
                 ?>
                 <option value="<?php echo $group_id; ?>"><?php echo get_the_title( $group_id ); ?></option>
                 <?php
@@ -128,6 +133,266 @@ class Learndash_Reporting {
 
         $response = [];
         global $wpdb;
+
+        $group_id = isset( $_POST['group_id'] ) ? intval( $_POST['group_id'] ) : 0;
+        $course_id = isset( $_POST['course_id'] ) ? intval( $_POST['course_id'] ) : 0;
+        $given_course_id = isset( $_POST['course_id'] ) ? intval( $_POST['course_id'] ) : 0;
+        $group_users = learndash_get_groups_user_ids( $group_id );
+        $activity_type = isset( $_POST['type'] ) ? $_POST['type'] : '';
+
+        if( 'not-started' == $activity_type ) {
+            $access_type = "'access', 'group_progress'";
+            $where = 'AND activity_status = 0';
+            $status_text = 'NOT STARTED';
+        }
+
+        if( 'in-progress' == $activity_type ) {
+            $access_type = "'course','group_progress'";
+            $where = 'AND activity_started != 0 AND activity_completed = 0';
+            $status_text = 'IN PROGRESS';
+        }
+
+        if( 'completed' == $activity_type ) {
+            $access_type = "'course','group_progress'";
+            $where = 'AND activity_completed != 0';
+            $status_text = 'COMPLETE';
+        }
+
+        if( 'Select Type' == $activity_type && ! $course_id && $group_id ) {
+            $access_type = "'group_progress'";
+            $status_text = '';
+        }
+
+        if( 'Select Type' == $activity_type && $course_id && $group_id ) {
+            $access_type = "'access','group_progress'";
+            $status_text = '';
+        }
+
+        if( ! $group_users ) {
+            wp_die();
+        }
+
+        if( $group_users ) {
+            $group_users = implode( ",", $group_users );
+        }
+
+        if( ! $course_id ) {
+            $course_id = learndash_get_group_courses_list( $group_id );
+            $course_id = implode( ",", $course_id );
+        }
+
+        $items_per_page = 10;
+        $page_number = isset($_POST['paged']) ? (int) $_POST['paged'] : 1;
+        $offset = ($page_number - 1) * $items_per_page;
+        $table_name = $wpdb->prefix . 'learndash_user_activity';
+        $count_query = $wpdb->prepare(
+            "
+            SELECT activity_id 
+            FROM $table_name
+            WHERE user_id IN ( $group_users )
+            AND ( course_id IN ( $course_id ) OR course_id = 0 )
+            AND activity_type IN ( $access_type )
+            $where
+            GROUP BY user_id order by activity_id DESC
+               "
+        );
+
+        $total_count = $wpdb->get_results( $count_query );
+        $total_data = count( $total_count );
+        $total_count = ceil( count( $total_count ) / $items_per_page );
+
+        $query = $wpdb->prepare(
+            "
+            SELECT * 
+            FROM $table_name
+            WHERE user_id IN ( $group_users )
+            AND ( course_id IN ( $course_id ) OR course_id = 0 )
+            AND activity_type IN ($access_type)
+            $where
+            GROUP BY user_id order by activity_id DESC
+            LIMIT %d OFFSET %d
+            ",
+            $items_per_page, $offset
+        );
+
+        $filtered_data = $wpdb->get_results($query);
+        
+        ob_start();
+        if( $filtered_data ) {
+
+            ?>
+            <div class="lr-table-wrapper">
+                <input type="hidden" class="lr-total-pages" value="<?php echo $total_count; ?>">
+                <input type="hidden" class="lr-group-id" value="<?php echo $group_id; ?>">
+                <input type="hidden" class="lr-course-id" value="<?php echo $given_course_id; ?>">
+                <table>
+                    <tr>
+                        <th><?php echo __( 'Student Name', LR_TEXT_DOMAIN ); ?></th>
+                        <th><?php echo __( 'Joining Date', LR_TEXT_DOMAIN ); ?></th>
+                        <th><?php echo __( 'Course Name', LR_TEXT_DOMAIN ); ?></th>
+                        <th><?php echo __( 'Status', LR_TEXT_DOMAIN ); ?></th>
+                    </tr>
+                    <?php 
+                    foreach( $filtered_data as $data ) {
+                        
+                        $user_id = isset( $data->user_id ) ? intval( $data->user_id ) : 0;
+                        $course_id = isset( $data->course_id ) ? intval( $data->course_id ) : 0;
+                        if( ! $course_id ) {
+                            
+                            $course_ids = learndash_get_group_courses_list( $group_id );
+
+                            if( ! empty( $course_ids ) && is_array( $course_ids ) ) {
+                                foreach( $course_ids as $course_id ) {
+
+                                    if( ! empty( $given_course_id ) && ( $given_course_id != $course_id ) ) {
+                                        continue;
+                                    }
+
+                                    if( ! $status_text ) {
+
+                                        $progress = learndash_course_progress(
+                                            array(
+                                                'user_id'   => $user_id,
+                                                'course_id' => $course_id,
+                                                'array'     => true,
+                                            )
+                                        );
+
+                                        $course_completion_text = '';
+                                        $course_completion = isset( $progress['completed'] ) ? $progress['completed'] : 0;
+                                        if( ! $course_completion ) {
+                                            $course_completion_text = 'NOT STARTED';
+                                        } elseif( $course_completion < $progress['total'] ) {
+                                            $course_completion_text = 'IN PROGRESS';                                    }
+                                        else {
+                                            $course_completion_text = 'COMPLETE';
+                                        }
+                                    } else {
+                                        $course_completion_text = $status_text;
+                                    }
+
+                                    $enrolled_date = isset( $data->activity_updated ) ? $data->activity_updated : '';
+                                    $enrolled_date = date('Y-m-d', $enrolled_date );
+
+                                    $query = $wpdb->prepare(
+                                        "
+                                        SELECT display_name
+                                        FROM {$wpdb->users}
+                                        WHERE ID = %d
+                                        ",
+                                        $user_id
+                                    );
+                                    $username = $wpdb->get_var($query);
+
+                                    ?>
+                                    <tr>
+                                        <td><?php echo ucwords( $username ); ?></td>
+                                        <td><?php echo $enrolled_date; ?></td>
+                                        <td><?php echo get_the_title( $course_id ); ?></td>
+                                        <td><?php echo $course_completion_text; ?></td>
+                                    </tr>
+                                    <?php
+                                }
+                            }
+                        } else {
+
+                            if( ! $status_text ) {
+
+                                $progress = learndash_course_progress(
+                                    array(
+                                        'user_id'   => $user_id,
+                                        'course_id' => $course_id,
+                                        'array'     => true,
+                                    )
+                                );
+
+                                $course_completion_text = '';
+                                $course_completion = isset( $progress['completed'] ) ? $progress['completed'] : 0;
+                                if( ! $course_completion ) {
+                                    $course_completion_text = 'NOT STARTED';
+                                } elseif( $course_completion < $progress['total'] ) {
+                                    $course_completion_text = 'IN PROGRESS';
+                                } else {
+                                    $course_completion_text = 'COMPLETE';
+                                }
+                            } else {
+                                $course_completion_text = $status_text;
+                            }
+
+                            $enrolled_date = isset( $data->activity_started ) ? $data->activity_updated : '';
+                            $enrolled_date = date('Y-m-d', $enrolled_date );
+
+                            $query = $wpdb->prepare(
+                                "
+                                SELECT display_name
+                                FROM {$wpdb->users}
+                                WHERE ID = %d
+                                ",
+                                $user_id
+                            );
+                            $username = $wpdb->get_var($query);
+                            
+                            ?>
+                            <tr>
+                                <td><?php echo ucwords( $username ); ?></td>
+                                <td><?php echo $enrolled_date; ?></td>
+                                <td><?php echo get_the_title( $course_id ); ?></td>
+                                <td><?php echo $course_completion_text; ?></td>
+                            </tr>
+                            <?php
+                        }
+                    }
+                    ?>                    
+                </table>
+                <?php
+                if( $total_data > 10 ) {
+
+                    $display = '';
+                    if( $total_data == $page_number ) {
+                        $display = 'none';
+                    }
+
+                    $less_than_display = '';
+                    if( $page_number == 1 ) {
+                        $less_than_display = 'none';
+                    }
+                    ?>
+                    <div class="lr-pagination">
+                        <span class="dashicons dashicons-arrow-left-alt2 lr-less-than" style="display: <?php echo $less_than_display; ?>;"></span>
+                        <span><?php echo $page_number.' out of '.$total_count; ?></span>
+                        <span class="dashicons dashicons-arrow-right-alt2 lr-greater-than" style="display: <?php echo $display; ?>;"></span>
+                    </div>
+                    <?php
+                }
+                ?>
+            </div>
+            <?php
+        } else {
+
+            ?>
+            <div class="lr-table-wrapper">
+                <table>
+                    <tr>
+                        <th><?php echo __( 'Student Name', LR_TEXT_DOMAIN ); ?></th>
+                        <th><?php echo __( 'Joining Date', LR_TEXT_DOMAIN ); ?></th>
+                        <th><?php echo __( 'Course Name', LR_TEXT_DOMAIN ); ?></th>
+                        <th><?php echo __( 'Status', LR_TEXT_DOMAIN ); ?></th>
+                    </tr>
+                    <tr>
+                        <td colspan="4"><?php echo __( 'No data found', LR_TEXT_DOMAIN ); ?></td>
+                    </tr>
+                </table>
+            </div>
+            <?php
+        }
+
+        $content = ob_get_contents();
+        ob_get_clean();
+
+        $response['content'] = $content;
+        $response['status'] = 'true';
+        echo json_encode( $response );
+        wp_die();
 
         $group_id = isset( $_POST['group_id'] ) ? intval( $_POST['group_id'] ) : 0;
         $course_id = isset( $_POST['course_id'] ) ? intval( $_POST['course_id'] ) : 0;
@@ -231,37 +496,6 @@ class Learndash_Reporting {
                                 $user_id
                             );
                             $display_name = $wpdb->get_var($sql);
-                            // $enrolled_date = get_user_meta( $user_id, 'learndash_course_'.$course_id.'_enrolled_at', true );
-                            // if( ! $enrolled_date ) {
-                            //     $enrolled_date = get_user_meta( $user_id, 'learndash_group_'.$group_id.'_enrolled_at', true );        
-                            //     if( ! $enrolled_date ) {
-                            //         $enrolled_date = get_user_meta( $user_id, 'course_'.$course_id.'_access_from', true );
-                            //     }      
-
-                            //     if( ! $enrolled_date ) {
-                                    
-                            //         $enrolled_date = get_user_meta( $user_id, 'group_'.$group_id.'_access_from', true );
-                            //     }
-
-                            //     if( $enrolled_date ) {
-                            //         $enrolled_date = date('Y-m-d', $enrolled_date );
-                            //     } else {
-
-                            //         $post_type = 'course';
-                            //         $query = $wpdb->prepare(
-                            //             "SELECT activity_started
-                            //             FROM {$wpdb->prefix}learndash_user_activity
-                            //             WHERE activity_type = %s
-                            //             AND course_id = %d
-                            //             AND user_id = %d",
-                            //             $post_type,
-                            //             $course_id,
-                            //             $user_id
-                            //         );
-                            //         $enrolled_date = $wpdb->get_var($query);
-                            //     }
-                            // }
-
                             $post_type = 'course';
                             $query = $wpdb->prepare(
                                 "SELECT activity_started
@@ -372,7 +606,11 @@ class Learndash_Reporting {
      */
     public function lr_reporting_shortcode() {
 
-        return self::lr_get_shortcode_html();
+        $user = get_userdata( get_current_user_id() );
+        if( in_array( 'administrator', $user->roles ) || in_array( 'group_leader', $user->roles ) ) {
+
+            return self::lr_get_shortcode_html();
+        }
     }
 
     /**
@@ -385,23 +623,23 @@ class Learndash_Reporting {
         $groups = array_column( $groups, 'ID' );
         ?>
         <div class="lr-main-wrapper">
+            <input type="hidden" value="1" class="lr-pagination-page">
             <select class="lr-group">
                 <option value=""><?php echo __( 'Select a Group', LR_TEXT_DOMAIN ); ?></option>
             </select>
             <select class="lr-course">
                 <option value=""><?php echo __( 'Select a Course', LR_TEXT_DOMAIN ); ?></option>
             </select>
-            <input type="button" class="lr-button" value="<?php echo __( 'Create Report', LR_TEXT_DOMAIN ); ?>">
-            <img src="<?php echo LR_ASSETS_URL.'images/spinner.gif' ?>" class="lr-loader">
-        </div>
-        <div class="lr-filter-wrapper">
             <select class="lr-filter">
-                <option><?php echo __( 'Select Filter', LR_TEXT_DOMAIN ); ?></option>
+                <option><?php echo __( 'Select Type', LR_TEXT_DOMAIN ); ?></option>
                 <option value="not-started"><?php echo __( 'NOT STARTED', LR_TEXT_DOMAIN ); ?></option>
                 <option value="in-progress"><?php echo __( 'IN PROGRESS', LR_TEXT_DOMAIN ); ?></option>
                 <option value="completed"><?php echo __( 'COMPLETE', LR_TEXT_DOMAIN ); ?></option>
             </select>
+            <input type="button" class="lr-button" value="<?php echo __( 'Generate Report', LR_TEXT_DOMAIN ); ?>">
+            <img src="<?php echo LR_ASSETS_URL.'images/spinner.gif' ?>" class="lr-loader">
         </div>
+        <div class="lr-filter-wrapper"></div>
         <?php
         $content = ob_get_contents();
         ob_get_clean();

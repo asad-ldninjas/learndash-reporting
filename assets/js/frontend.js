@@ -7,12 +7,108 @@
 				this.createReport();
 				this.filterOnChange();
 				this.searchGroup();
+				this.nextPagination();
+				this.backPagination();
+			},
+
+			/**
+			 * back pagination
+			 */
+			backPagination: function() {
+
+				$( document ).on( 'click', '.lr-less-than', function() {
+
+					$( '.lr-loader' ).show();
+					let paginationPage = $( '.lr-pagination-page' ).val();
+					let nextPage = parseInt( paginationPage ) - 1;
+					$( '.lr-pagination-page' ).val( nextPage );
+
+					let totalPages = $( '.lr-total-pages' ).val();
+
+					if( nextPage == totalPages ) {
+						$( '.lr-greater-than' ).hide();
+					}
+
+					let groupID = $( '.lr-group-id' ).val();
+					let courseID = $( '.lr-course-id' ).val();
+					let type = $( '.lr-filter' ).val();
+
+					let data = {
+						'action'          : 'create_report',
+						'group_id'        : groupID,
+						'course_id'		  : courseID,
+						'paged'			  : nextPage,
+						'type'			  : type
+					};
+
+					jQuery.post( LR.ajaxURL, data, function( response ) {
+
+						let jsonEncode = JSON.parse( response );
+
+						if( jsonEncode.status == 'true' ) {
+							$( '.lr-table-wrapper' ).remove();
+							$( '.lr-filter-wrapper' ).after( jsonEncode.content );
+							$( '.lr-filter' ).show();
+							$( '.lr-loader' ).hide();
+						}
+					} );
+				} );
+			},
+
+			/**
+			 * next pagination
+			 */
+			nextPagination: function() {
+
+				$( document ).on( 'click', '.lr-greater-than', function() {
+
+					$( '.lr-loader' ).show();
+					let paginationPage = $( '.lr-pagination-page' ).val();
+					let nextPage = parseInt( paginationPage ) + 1;
+					$( '.lr-pagination-page' ).val( nextPage );
+					
+					let totalPages = $( '.lr-total-pages' ).val();
+
+					if( nextPage == totalPages ) {
+						$( '.lr-greater-than' ).addClass( 'lr-hide' );
+					}
+
+					let groupID = $( '.lr-group-id' ).val();
+					let courseID = $( '.lr-course-id' ).val();
+					// console.log( courseID );
+					let type = $( '.lr-filter' ).val();
+
+					let data = {
+						'action'          : 'create_report',
+						'group_id'        : groupID,
+						'course_id'		  : courseID,
+						'paged'			  : nextPage,
+						'type'			  : type
+					};
+
+					jQuery.post( LR.ajaxURL, data, function( response ) {
+
+						let jsonEncode = JSON.parse( response );
+
+						if( jsonEncode.status == 'true' ) {
+							$( '.lr-table-wrapper' ).remove();
+							$( '.lr-filter-wrapper' ).after( jsonEncode.content );
+							$( '.lr-filter' ).show();
+							$( '.lr-loader' ).hide();
+						}
+					} );
+				} );
 			},
 
 			/**
 			 * group live search 
 			 */
 			searchGroup: function() {
+
+				$( document ).on( 'select2:select', '.lr-group', function() {
+
+					$( '.lr-course' ).html( '<option value="">Select a Course</option>' );
+				} );
 
 				setTimeout(function() {
 					$( '.select2.select2-container' ).removeAttr( 'style' );
@@ -72,6 +168,13 @@
 						$( '.lr-not-started' ).hide();
 					} 
 
+					if( val == 'Select Filter' ) {
+
+						$( '.lr-completed' ).show();
+						$( '.lr-in-progress' ).show();
+						$( '.lr-not-started' ).show();
+					}
+
 
 				} );
 			},
@@ -83,14 +186,19 @@
 
 				$( document ).on( 'click', '.lr-button', function() {
 
+					$( '.lr-pagination-page' ).val(1);
 					$( '.lr-loader' ).show();
 					let groupID = $( '.lr-group' ).val();
 					let courseID = $( '.lr-course' ).val();
-					
+					let paginationPage = $( '.lr-pagination-page' ).val();
+					let type = $( '.lr-filter' ).val();
+
 					let data = {
 						'action'          : 'create_report',
 						'group_id'        : groupID,
-						'course_id'		  : courseID
+						'course_id'		  : courseID,
+						'paged'			  : paginationPage,
+						'type'			  : type
 					};
 
 					jQuery.post( LR.ajaxURL, data, function( response ) {

@@ -6,7 +6,6 @@
 				this.groupOnChange();
 				this.createReport();
 				this.filterOnChange();
-				// this.searchGroup();
 				this.nextPagination();
 				this.backPagination();
 				this.lastPage();
@@ -399,38 +398,6 @@
 							$( '.lr-filter-wrapper' ).after( jsonEncode.content );
 							$( '.lr-filter' ).show();
 							$( '.lr-loader' ).hide();
-						}
-					} );
-				} );
-			},
-
-			/**
-			 * group live search 
-			 */
-			searchGroup: function() {
-
-				setTimeout(function() {
-					$( '.select2.select2-container' ).removeAttr( 'style' );
-					$( '.select2.select2-container' ).addClass( 'lr-width' );
-					$( '.select2-selection.select2-selection--single' ).css( 'height', '49px' );
-				}, 3000 ); 
-
-				$( document ).on( 'input', '.select2-search__field', function() {
-
-					let self = $(this);
-					let val = self.val();
-
-					let data = {
-						'action'          : 'search_group',
-						'group_name'      : val
-					};
-
-					jQuery.post( LR.ajaxURL, data, function( response ) {
-
-						let jsonEncode = JSON.parse( response );
-
-						if( jsonEncode.status == 'true' ) {
-							$( '.lr-group' ).html( jsonEncode.content );
 						}
 					} );
 				} );

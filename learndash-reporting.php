@@ -87,11 +87,6 @@ class Learndash_Reporting {
         add_action( 'wp_ajax_download_csv_report', [ $this, 'lr_download_csv_report' ] );
         add_action( 'init', [ $this, 'lr_download_csv' ] );
         add_action( 'wp_ajax_load_group_option', [ $this, 'lr_load_group_option' ] );
-        // add_action( 'wp', function() {
-
-        //     $role = get_role('student');
-        //     var_dump( $role );
-        // } );
     }
 
     /**
@@ -848,14 +843,18 @@ class Learndash_Reporting {
      */
     public function lr_enqueue_scripts() {
 
-        $rand = rand( 1, 99999999999 );
+        $has_shortcode = has_shortcode( get_the_content(), 'learndash-reporting' );
+        
+        if( $has_shortcode ) {
 
-        wp_enqueue_style( 'lr-frontend-css', LR_ASSETS_URL . 'css/lr-frontend_2.css', [], $rand, null );
-        wp_enqueue_script( 'lr-frontend-js', LR_ASSETS_URL . 'js/lr-frontend.js', [ 'jquery' ], $rand, true );
-        wp_localize_script( 'lr-frontend-js', 'LR', [
-            'ajaxURL'       => admin_url( 'admin-ajax.php' ),
-            'baseURL'       => get_permalink(),
-        ] );
+            $rand = rand( 1, 99999999999 );
+            wp_enqueue_style( 'lr-frontend-css', LR_ASSETS_URL . 'css/lr-frontend_2.css', [], $rand, null );
+            wp_enqueue_script( 'lr-frontend-js', LR_ASSETS_URL . 'js/lr-frontend.js', [ 'jquery' ], $rand, true );
+            wp_localize_script( 'lr-frontend-js', 'LR', [
+                'ajaxURL'       => admin_url( 'admin-ajax.php' ),
+                'baseURL'       => get_permalink(),
+            ] );
+        }
     }
 
     /**

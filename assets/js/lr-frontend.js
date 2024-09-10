@@ -484,12 +484,20 @@
 
 				$( document ).on( 'click', '.lr-button', function() {
 
+					$( '.lr-error-message' ).remove();
 					$( '.lr-pagination-page' ).val(1);
 					$( '.lr-loader' ).show();
 					
 					let dataType = $( '.lr-button' ).attr( 'data-type' );
-					// let groupID = $( '.lr-group' ).val();
 					let groupID = $( '.lr-group-dropdown-header' ).attr( 'data-selected-group' );
+					if( ! groupID ) {
+						
+						$( '.lr-loader' ).hide();
+						let html = '';
+						html += '<div class="lr-error-message">Please select a group to generate a report</div>';
+						$( '.lr-main-wrapper' ).after( html );
+						return false;
+					}
 					let courseID = $( '.lr-course' ).val();
 					let paginationPage = $( '.lr-pagination-page' ).val();
 					let type = $( '.lr-filter' ).val();

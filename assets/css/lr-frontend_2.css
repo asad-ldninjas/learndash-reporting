@@ -35,6 +35,10 @@
 .lr-arrow-up {
   cursor: pointer;
 }
+.lr-error-message {
+  text-align: center;
+  margin-top: 40px;
+}
 .lr-order-by {
   margin-top: 10px;
   width: 25%;

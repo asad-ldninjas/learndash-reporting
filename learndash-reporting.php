@@ -87,6 +87,11 @@ class Learndash_Reporting {
         add_action( 'wp_ajax_download_csv_report', [ $this, 'lr_download_csv_report' ] );
         add_action( 'init', [ $this, 'lr_download_csv' ] );
         add_action( 'wp_ajax_load_group_option', [ $this, 'lr_load_group_option' ] );
+        // add_action( 'wp', function() {
+
+        //     $role = get_role('student');
+        //     var_dump( $role );
+        // } );
     }
 
     /**

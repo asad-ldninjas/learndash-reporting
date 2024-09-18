@@ -1,0 +1,68 @@
+.mpt-userrole-wrap .mpt-title,
+.mpt-minimum-wrap .mpt-title,
+.mpt-increamental-wrap .mpt-title,
+.mpt-increamental-message-wrap .mpt-title,
+.mpt-minimum-message-wrap .mpt-title {
+    padding: 10px;
+    font-size: 15px;
+    font-weight: 600;
+}
+.mpt-userrole-wrap .mpt-value,
+.mpt-minimum-wrap .mpt-value,
+.mpt-increamental-wrap .mpt-value,
+.mpt-increamental-message-wrap .mpt-value,
+.mpt-minimum-message-wrap .mpt-value {
+    padding: 0 10px;
+}
+.mpt-userrole-wrap .select2.select2-container,
+.mpt-admin-wrapper .select2.select2-container {
+    width: 50% !important;
+}
+.wc-wp-version-gte-53 .select2-container .select2-selection--multiple {
+    height: 50px !important;
+    padding: 8px !important;
+}
+.mpt-settings-submit,
+.mpt-admin-setting-title {
+    margin: 10px !important;
+}
+.mpt-minimum-wrap .mpt-value input,
+.mpt-increamental-wrap .mpt-value input {
+    width: 65px;
+}
+.mpt-mycred-table {
+	margin-top: 15px !important;
+}
+.mpt-progress-wrapper,
+.mpt-progress-bar {
+    padding: 0 10px;
+}
+.mpt-drop-container:hover {
+    background: #eee;
+    border-color: #111;
+}
+.mpt-drop-container {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    position: relative;
+    display: flex;
+    gap: 10px;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 112px;
+    width: 40%;
+    padding: 20px;
+    border-radius: 10px;
+    border: 2px dashed #555;
+    color: #444;
+    cursor: pointer;
+    transition: background .2s ease-in-out, border .2s ease-in-out;
+}
+.mpt-drop-title {
+    color: #444;
+    font-size: 20px;
+    font-weight: bold;
+    text-align: center;
+    transition: color .2s ease-in-out;
+}

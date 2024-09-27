@@ -197,7 +197,6 @@
 				$( document ).on( 'click', '.lr-csv-btn', function() {
 
 					$( '.lr-csv-btn' ).text( 'Download Report ...' );
-					// let groupID = $( '.lr-group' ).val();
 					let groupID = $( '.lr-group-dropdown-header' ).attr( 'data-selected-group' );
 
 					let courseID = $( '.lr-course' ).val();

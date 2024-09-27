@@ -83,7 +83,6 @@ class Learndash_Reporting {
         add_action( 'wp_enqueue_scripts', [ $this, 'lr_enqueue_scripts' ] );
         add_action( 'wp_ajax_set_course_according_to_group', [ $this, 'lr_set_course_according_to_group' ] );
         add_action( 'wp_ajax_create_report', [ $this, 'lr_create_report' ] );
-        add_action( 'wp_ajax_search_group', [ $this, 'lr_search_group' ] );
         add_action( 'wp_ajax_download_csv_report', [ $this, 'lr_download_csv_report' ] );
         add_action( 'init', [ $this, 'lr_download_csv' ] );
         add_action( 'wp_ajax_load_group_option', [ $this, 'lr_load_group_option' ] );
@@ -171,70 +170,32 @@ class Learndash_Reporting {
                 wp_die();
             }
 
-            if( 'not-started' == $activity_type ) {
-
-                if( ! $course_id ) {
-                    $access_type = "'access', 'group_progress'";
-                }
-
-                if( $course_id ) {
-                    $access_type = "'course','access', 'group_progress'";
-                }
-
-                $where = "AND ( activity_status = 0 OR activity_status = 'NULL' OR activity_completed != 0 )";
-                $status_text = 'Not started';
-            }
-
-            if( 'in-progress' == $activity_type ) {
-
-                $access_type = "'course','group_progress'";
-                $where = 'AND activity_started != 0 AND activity_completed = 0 AND activity_completed = "NULL"';
-                $status_text = 'In progress';
-            }
+            $completed_condition = '';
+            $usermeta_join = '';
 
             if( 'completed' == $activity_type ) {
 
-                $access_type = "'course','group_progress'";
-
-                $where = "AND activity_completed != 0 AND activity_completed != 'NULL'";
-                $status_text = 'Completed';
-            }
-
-            if( 'Select progress' == $activity_type && ! $course_id && $group_id ) {
-                $access_type = "'group_progress'";
-                $status_text = '';
-            }
-
-            if( 'Select progress' == $activity_type && $course_id && $group_id ) {
-                $access_type = "'access','group_progress'";
-                $status_text = '';
-            }
-
-            if( ! $group_users ) {
-                wp_die();
+                $usermeta_table = $wpdb->prefix.'usermeta';
+                $completed_condition = "AND u.meta_key = CONCAT('course_completed_', p.post_id)";
+                $usermeta_join = 'INNER JOIN '.$usermeta_table.' as u on a.user_id = u.user_id';
             }
 
             if( $group_users ) {
                 $group_users = implode( ",", $group_users );
             }
 
+            $course_where = '';
+
             if( ! $course_id ) {
-                $course_id = learndash_get_group_courses_list( $group_id );
-                $course_id = implode( ",", $course_id );
+                $course_id = self::lr_group_courses( $group_id );
+                $course_id = implode( ",", $course_id ); 
+            } else {
+                $course_where = 'AND p.post_id = '.$course_id;
             }
 
             $table_name = $wpdb->prefix . 'learndash_user_activity';
-            $query = $wpdb->prepare(
-                "
-                SELECT * 
-                FROM $table_name
-                WHERE user_id IN ( $group_users )
-                AND ( course_id IN ( $course_id ) OR course_id = 0 )
-                AND activity_type IN ( $access_type )
-                $where
-                GROUP BY user_id order by activity_id DESC
-                "
-            );
+            $group_meta_key = 'learndash_group_enrolled_'.$group_id;
+            $query = self::lr_get_query( $activity_type, $usermeta_join, $group_meta_key, $group_id, $group_users, $completed_condition, $course_where, $course_id );
 
             $filtered_data = $wpdb->get_results($query);
             $log_data = [];
@@ -244,142 +205,64 @@ class Learndash_Reporting {
                 foreach( $filtered_data as $data ) {
 
                     $user_id = isset( $data->user_id ) ? intval( $data->user_id ) : 0;
-                    $course_id = isset( $data->course_id ) ? intval( $data->course_id ) : 0;
-                    if( ! $course_id ) {
+                    $course_id = isset( $data->object_id ) ? intval( $data->object_id ) : 0;
 
-                        $course_ids = learndash_get_group_courses_list( $group_id );
+                    $progress = learndash_course_progress(
+                        array(
+                            'user_id'   => $user_id,
+                            'course_id' => $course_id,
+                            'array'     => true,
+                        )
+                    );
 
-                        if( ! empty( $course_ids ) && is_array( $course_ids ) ) {
-                            foreach( $course_ids as $course_id ) {
+                    $course_completion_text = '';
+                    $course_completion = isset( $progress['completed'] ) ? $progress['completed'] : 0;
+                    $course_percentage = isset( $progress['percentage'] ) ? $progress['percentage'] : 0;
 
-                                if( ! empty( $given_course_id ) && ( $given_course_id != $course_id ) ) {
-                                    continue;
-                                }
-
-                                $progress = learndash_course_progress(
-                                    array(
-                                        'user_id'   => $user_id,
-                                        'course_id' => $course_id,
-                                        'array'     => true,
-                                    )
-                                );
-
-                                $course_completion_text = '';
-                                $course_completion = isset( $progress['completed'] ) ? $progress['completed'] : 0;
-                                $course_percentage = isset( $progress['percentage'] ) ? $progress['percentage'] : 0;
-
-                                if( ! $course_completion ) {
-                                    $course_completion_text = 'Not started';
-                                } elseif( $course_completion < $progress['total'] ) {
-                                    $course_completion_text = 'In progress';                                    
-                                } else {
-                                    $course_completion_text = 'Completed';
-                                }
-
-                                if( ! empty( $status_text ) && $status_text != $course_completion_text ) {
-                                    continue;
-                                }
-
-                                $enrolled_date = isset( $data->activity_updated ) ? $data->activity_updated : '';
-                                if( $enrolled_date ) {
-                                    $enrolled_date = date( 'Y-m-d', $enrolled_date );    
-                                } else {
-                                    $enrolled_date = isset( $data->activity_updated ) ? $data->activity_updated : '';
-                                    $enrolled_date = date( 'Y-m-d', $enrolled_date );
-                                }
-                                
-                                $query = $wpdb->prepare(
-                                    "
-                                    SELECT display_name
-                                    FROM {$wpdb->users}
-                                    WHERE ID = %d
-                                    ",
-                                    $user_id
-                                );
-
-                                $username = $wpdb->get_var($query);
-
-                                $last_logged_in = get_user_meta( $user_id, 'learndash-last-login', true );
-
-                                if( $last_logged_in ) {
-                                    $formatted_date = date( 'd-m-Y', $last_logged_in );
-                                } else {
-                                    $formatted_date = 'Never';
-                                }
-
-                                $log_data[] = [
-                                    'Stucent Name'   => ucwords( $username ),
-                                    'Joining Date'   => $enrolled_date,
-                                    'Course Name'    => get_the_title( $course_id ),
-                                    'Percentage'     => $course_percentage.'%',
-                                    'Last Accessed'  => $formatted_date,
-                                    'Status'         => $course_completion_text,
-                                ];
-                            }
-                        } 
+                    if( ! $course_completion ) {
+                        $course_completion_text = 'Not started';
+                    } elseif( $course_completion < $progress['total'] ) {
+                        $course_completion_text = 'In progress';
                     } else {
-
-                        $progress = learndash_course_progress(
-                            array(
-                                'user_id'   => $user_id,
-                                'course_id' => $course_id,
-                                'array'     => true,
-                            )
-                        );
-
-                        $course_completion_text = '';
-                        $course_completion = isset( $progress['completed'] ) ? $progress['completed'] : 0;
-                        $course_percentage = isset( $progress['percentage'] ) ? $progress['percentage'] : 0;
-
-                        if( ! $course_completion ) {
-                            $course_completion_text = 'Not started';
-                        } elseif( $course_completion < $progress['total'] ) {
-                            $course_completion_text = 'In progress';
-                        } else {
-                            $course_completion_text = 'Completed';
-                        }
-
-                        if( ! empty( $status_text ) && $status_text != $course_completion_text ) {
-                            continue;
-                        }
-
-                        $enrolled_date = isset( $data->activity_started ) ? $data->activity_updated : '';
-                        
-                        if( $enrolled_date ) {
-                            $enrolled_date = date('Y-m-d', $enrolled_date );
-                        } else {
-                            $enrolled_date = isset( $data->activity_updated ) ? $data->activity_updated : '';
-                            $enrolled_date = date( 'Y-m-d', $enrolled_date );
-                        }
-    
-                        $query = $wpdb->prepare(
-                            "
-                            SELECT display_name
-                            FROM {$wpdb->users}
-                            WHERE ID = %d
-                            ",
-                            $user_id
-                        );
-
-                        $username = $wpdb->get_var($query);
-
-                        $last_logged_in = get_user_meta( $user_id, 'learndash-last-login', true );
-
-                        if( $last_logged_in ) {
-                            $formatted_date = date( 'd-m-Y', $last_logged_in );
-                        } else {
-                            $formatted_date = 'Never';
-                        }
-
-                        $log_data[] = [
-                            'Stucent Name'   => ucwords( $username ),
-                            'Joining Date'   => $enrolled_date,
-                            'Course Name'    => get_the_title( $course_id ),
-                            'Percentage'     => $course_percentage.'%',
-                            'Last Accessed'  => $formatted_date,  
-                            'Status'         => $course_completion_text,
-                        ];
+                        $course_completion_text = 'Completed';
                     }
+
+                    $enrolled_date = isset( $data->activity_started ) ? $data->activity_updated : '';
+                    
+                    if( $enrolled_date ) {
+                        $enrolled_date = date('Y-m-d', $enrolled_date );
+                    } else {
+                        $enrolled_date = isset( $data->activity_updated ) ? $data->activity_updated : '';
+                        $enrolled_date = date( 'Y-m-d', $enrolled_date );
+                    }
+
+                    $query = $wpdb->prepare(
+                        "
+                        SELECT display_name
+                        FROM {$wpdb->users}
+                        WHERE ID = %d
+                        ",
+                        $user_id
+                    );
+
+                    $username = $wpdb->get_var($query);
+
+                    $last_logged_in = get_user_meta( $user_id, 'learndash-last-login', true );
+
+                    if( $last_logged_in ) {
+                        $formatted_date = date( 'd-m-Y', $last_logged_in );
+                    } else {
+                        $formatted_date = 'Never';
+                    }
+
+                    $log_data[] = [
+                        'Stucent Name'   => ucwords( $username ),
+                        'Joining Date'   => $enrolled_date,
+                        'Course Name'    => get_the_title( $course_id ),
+                        'Percentage'     => $course_percentage.'%',
+                        'Last Accessed'  => $formatted_date,  
+                        'Status'         => $course_completion_text,
+                    ];
                 }
             }
 
@@ -430,55 +313,16 @@ class Learndash_Reporting {
     }
 
     /**
-     * get groups
-     */
-    public function lr_search_group() {
-
-        global $wpdb;
-
-        $user_id = get_current_user_id();
-        $group_name = isset( $_POST['group_name'] ) ? str_replace( ' ', '-', $_POST['group_name'] ) : '';        
-
-        $pattern = '%'.$group_name.'%';
-        $sql = $wpdb->prepare(
-            "SELECT ID FROM $wpdb->posts WHERE post_type = %s AND post_name LIKE %s",
-            'groups',
-            $pattern 
-        );
-
-        $results = $wpdb->get_col($sql);
-        ob_start();
-        if( ! empty( $results ) && is_array( $results ) ) {
-            foreach( $results as $group_id ) {
-                $group_id = intval( $group_id );
-                $user_is_group_leader = get_user_meta( $user_id, 'learndash_group_leaders_'.$group_id, true );
-                if( ! $user_is_group_leader ) {
-                    continue;
-                }
-                ?>
-                <option value="<?php echo $group_id; ?>"><?php echo get_the_title( $group_id ); ?></option>
-                <?php
-            }
-        }
-        $content = ob_get_contents();
-        ob_get_clean();
-
-        $response['content'] = $content;
-        $response['status'] = 'true';
-        echo json_encode( $response );
-        wp_die();
-    }
-
-    /**
      * create report according to instruction
      */ 
     public function lr_create_report() {
 
         $response = [];
         global $wpdb;
+        $table_name = $wpdb->prefix . 'learndash_user_activity';
 
         $group_id = isset( $_POST['group_id'] ) ? intval( $_POST['group_id'] ) : 0;
-        $course_id = isset( $_POST['course_id'] ) ? intval( $_POST['course_id'] ) : 0;
+        $course_id = isset( $_POST['course_id'] ) ? intval( $_POST['course_id'] ) : '';
         $given_course_id = isset( $_POST['course_id'] ) ? intval( $_POST['course_id'] ) : 0;
         $group_users = learndash_get_groups_user_ids( $group_id );
         $activity_type = isset( $_POST['type'] ) ? $_POST['type'] : '';
@@ -496,95 +340,47 @@ class Learndash_Reporting {
             $activity_type = 'not-started';
         }
 
-        if( 'not-started' == $activity_type ) {
-            
-            if( ! $course_id ) {
-                $access_type = "'access', 'group_progress'";
-            }
-
-            if( $course_id ) {
-                $access_type = "'course','access', 'group_progress'";
-            }
-
-            $where = "AND ( activity_status = 0 OR activity_status = 'NULL' OR activity_completed != 0 )";
-            $status_text = 'Not started';
-        }
-
-        if( 'in-progress' == $activity_type ) {
-    
-            $access_type = "'course','group_progress'";
-            $where = 'AND activity_started != 0 AND activity_completed = 0 AND activity_completed = "NULL"';
-            $status_text = 'In progress';
-        }
+        $completed_condition = '';
+        $usermeta_join = '';
 
         if( 'completed' == $activity_type ) {
 
-            $access_type = "'course','group_progress'";
-
-            $where = "AND activity_completed != 0 AND activity_completed != 'NULL'";
-            $status_text = 'Completed';
-        }
-
-        if( 'Select progress' == $activity_type && ! $course_id && $group_id ) {
-            $access_type = "'group_progress'";
-            $status_text = '';
-        }
-
-        if( 'Select progress' == $activity_type && $course_id && $group_id ) {
-            $access_type = "'access','group_progress'";
-            $status_text = '';
-        }
-
-        if( ! $group_users ) {
-            wp_die();
+            $usermeta_table = $wpdb->prefix.'usermeta';
+            $completed_condition = "AND u.meta_key = CONCAT('course_completed_', p.post_id)";
+            $usermeta_join = 'INNER JOIN '.$usermeta_table.' as u on a.user_id = u.user_id';
         }
 
         if( $group_users ) {
             $group_users = implode( ",", $group_users );
         }
 
+        $course_where = '';
+
         if( ! $course_id ) {
-            $course_id = learndash_get_group_courses_list( $group_id );
-            $course_id = implode( ",", $course_id );
+            $course_id = self::lr_group_courses( $group_id );
+            $course_id = implode( ",", $course_id ); 
+        } else {
+            $course_where = 'AND p.post_id = '.$course_id;
         }
 
         $items_per_page = 10;
         $page_number = isset($_POST['paged']) ? (int) $_POST['paged'] : 1;
         $offset = ($page_number - 1) * $items_per_page;
-        $table_name = $wpdb->prefix . 'learndash_user_activity';
-        $count_query = $wpdb->prepare(
-            "
-            SELECT activity_id 
-            FROM $table_name
-            WHERE user_id IN ( $group_users )
-            AND ( course_id IN ( $course_id ) OR course_id = 0 )
-            AND activity_type IN ( $access_type )
-            $where
-            GROUP BY user_id order by activity_id DESC
-               "
-        );
 
-        $total_count = $wpdb->get_results( $count_query );
-        $total_data = count( $total_count );
-        $total_count = ceil( count( $total_count ) / $items_per_page );
+        $group_meta_key = 'learndash_group_enrolled_'.$group_id;
 
-        $query = $wpdb->prepare(
-            "
-            SELECT * 
-            FROM $table_name
-            WHERE user_id IN ( $group_users )
-            AND ( course_id IN ( $course_id ) OR course_id = 0 )
-            AND activity_type IN ($access_type)
-            $where
-            GROUP BY user_id order by activity_id DESC
-            LIMIT %d OFFSET %d
-            ",
-            $items_per_page, $offset
-        );
+        $count_query = self::lr_get_query( $activity_type, $usermeta_join, $group_meta_key, $group_id, $group_users, $completed_condition, $course_where, $course_id );
 
-        $filtered_data = $wpdb->get_results($query);
-               
+        $count_result = $wpdb->get_results($count_query);
+        $count_result = count( $count_result );
+        $total_pages = ceil( $count_result / $items_per_page );
+        
+        $query = self::lr_get_query( $activity_type, $usermeta_join, $group_meta_key, $group_id, $group_users, $completed_condition, $course_where, $course_id, 'yes', $items_per_page, $offset );
+
+        $filtered_data = $wpdb->get_results($query);   
+
         ob_start();
+
         if( $filtered_data ) {
 
             ?>
@@ -622,158 +418,80 @@ class Learndash_Reporting {
                     <tbody>
                     <?php 
                     foreach( $filtered_data as $data ) {
-                        
+
                         $user_id = isset( $data->user_id ) ? intval( $data->user_id ) : 0;
-                        $course_id = isset( $data->course_id ) ? intval( $data->course_id ) : 0;
-                        if( ! $course_id ) {
+                        $course_id = isset( $data->object_id ) ? intval( $data->object_id ) : 0;
+                        $progress = learndash_course_progress(
+                            array(
+                                'user_id'   => $user_id,
+                                'course_id' => $course_id,
+                                'array'     => true,
+                            )
+                        );
 
-                            $course_ids = learndash_get_group_courses_list( $group_id );
-
-                            if( ! empty( $course_ids ) && is_array( $course_ids ) ) {
-                                foreach( $course_ids as $course_id ) {
-                                    
-                                    $query = $wpdb->prepare(
-                                        "
-                                        SELECT display_name
-                                        FROM {$wpdb->users}
-                                        WHERE ID = %d
-                                        ",
-                                        $user_id
-                                    );
-
-                                    $username = $wpdb->get_var($query);
-
-                                    if( ! empty( $given_course_id ) && ( $given_course_id != $course_id ) ) {
-                                        continue;
-                                    }
-
-                                    $progress = learndash_course_progress(
-                                        array(
-                                            'user_id'   => $user_id,
-                                            'course_id' => $course_id,
-                                            'array'     => true,
-                                        )
-                                    );
-
-                                    $course_percentage = isset( $progress['percentage'] ) ? $progress['percentage'] : 0;
-                                    $course_completion = isset( $progress['completed'] ) ? $progress['completed'] : 0;
-                                    if( ! $course_completion ) {
-                                        $course_completion_text = 'Not started';
-                                    } elseif( $course_completion < $progress['total'] ) {
-                                        $course_completion_text = 'In progress';                                    }
-                                    else {
-                                        $course_completion_text = 'Completed';
-                                    }
-
-                                    if( ! empty( $status_text ) && $status_text != $course_completion_text ) {
-                                        continue;
-                                    }
-
-                                    $enrolled_date = isset( $data->activity_updated ) ? $data->activity_updated : '';
-                                    $enrolled_date = date('d-m-Y', $enrolled_date );
-
-                                    $download_text = '-';
-                                    if( 'Completed' == $course_completion_text ) {
-                                        $download_text = __( 'Download', LR_TEXT_DOMAIN );
-                                    }
-
-                                    $last_logged_in = get_user_meta( $user_id, 'learndash-last-login', true );
-
-                                    if( $last_logged_in ) {
-                                        $formatted_date = date( 'd-m-Y', $last_logged_in );
-                                    } else {
-                                        $formatted_date = 'Never';
-                                    }
-
-                                    ?>
-                                    <tr>
-                                        <td><?php echo ucwords( $username ); ?></td>
-                                        <td><?php echo $enrolled_date; ?></td>
-                                        <td><?php echo get_the_title( $course_id ); ?></td>
-                                        <td><?php echo $course_completion_text; ?></td>
-                                        <td><?php echo $course_percentage.'%'; ?></td>
-                                        <td><?php echo $formatted_date; ?></td>
-                                        <td><a href="<?php echo learndash_get_course_certificate_link( $course_id, $user_id ); ?>" target="_blank"><?php echo $download_text; ?></a></td>
-                                    </tr>
-                                    <?php
-                                }
-                            }
+                        $course_percentage = isset( $progress['percentage'] ) ? $progress['percentage'] : 0;
+                        $course_completion_text = '';
+                        $course_completion = isset( $progress['completed'] ) ? $progress['completed'] : 0;
+                        if( ! $course_completion ) {
+                            $course_completion_text = 'Not started';
+                        } elseif( $course_completion < $progress['total'] ) {
+                            $course_completion_text = 'In progress';
                         } else {
-                                $progress = learndash_course_progress(
-                                    array(
-                                        'user_id'   => $user_id,
-                                        'course_id' => $course_id,
-                                        'array'     => true,
-                                    )
-                                );
-
-                                $course_percentage = isset( $progress['percentage'] ) ? $progress['percentage'] : 0;
-                                $course_completion_text = '';
-                                $course_completion = isset( $progress['completed'] ) ? $progress['completed'] : 0;
-                                if( ! $course_completion ) {
-                                    $course_completion_text = 'Not started';
-                                } elseif( $course_completion < $progress['total'] ) {
-                                    $course_completion_text = 'In progress';
-                                } else {
-                                    $course_completion_text = 'Completed';
-                                }
-
-                                if( ! empty( $status_text ) && $status_text != $course_completion_text ) {
-                                    continue;
-                                }
-
-                            $enrolled_date = isset( $data->activity_started ) ? $data->activity_updated : '';
-                            if( ! $enrolled_date ) {
-                                $enrolled_date = isset( $data->activity_updated ) ? $data->activity_updated : '';
-                            }
-                            $enrolled_date = date('d-m-Y', $enrolled_date );
-
-                            $query = $wpdb->prepare(
-                                "
-                                SELECT display_name
-                                FROM {$wpdb->users}
-                                WHERE ID = %d
-                                ",
-                                $user_id
-                            );
-
-                            $username = $wpdb->get_var($query);
-                            $download_text = '-';
-                            if( 'Completed' == $course_completion_text ) {
-                                $download_text = __( 'Download', LR_TEXT_DOMAIN );
-                            }
-
-                            $last_logged_in = get_user_meta( $user_id, 'learndash-last-login', true );
-                            if( $last_logged_in ) {
-                                $formatted_date = date( 'd-m-Y', $last_logged_in );
-                            } else {
-                                $formatted_date = 'Never';
-                            }
-                            
-                            ?>
-                            <tr>
-                                <td><?php echo ucwords( $username ); ?></td>
-                                <td><?php echo $enrolled_date; ?></td>
-                                <td><?php echo get_the_title( $course_id ); ?></td>
-                                <td><?php echo $course_completion_text; ?></td>
-                                <td><?php echo $course_percentage.'%'; ?></td>
-                                <td><?php echo $formatted_date; ?></td>
-                                <td><a href="<?php echo learndash_get_course_certificate_link( $course_id, $user_id ); ?>" target="_blank"><?php echo $download_text; ?></a></td>
-                            </tr>
-                            <?php
+                            $course_completion_text = 'Completed';
                         }
+
+                        $enrolled_date = isset( $data->activity_started ) ? $data->activity_updated : '';
+
+                        if( ! $enrolled_date ) {
+                            $enrolled_date = isset( $data->activity_updated ) ? $data->activity_updated : '';
+                        }
+                        $enrolled_date = date('d-m-Y', $enrolled_date );
+
+                        $query = $wpdb->prepare(
+                            "
+                            SELECT display_name
+                            FROM {$wpdb->users}
+                            WHERE ID = %d
+                            ",
+                            $user_id
+                        );
+
+                        $username = $wpdb->get_var($query);
+                        $download_text = '-';
+                        if( 'Completed' == $course_completion_text ) {
+                            $download_text = __( 'Download', LR_TEXT_DOMAIN );
+                        }
+
+                        $last_logged_in = get_user_meta( $user_id, 'learndash-last-login', true );
+                        if( $last_logged_in ) {
+                            $formatted_date = date( 'd-m-Y', $last_logged_in );
+                        } else {
+                            $formatted_date = 'Never';
+                        }
+
+                        ?>
+                        <tr>
+                            <td><?php echo ucwords( $username ); ?></td>
+                            <td><?php echo $enrolled_date; ?></td>
+                            <td><?php echo get_the_title( $course_id ); ?></td>
+                            <td><?php echo $course_completion_text; ?></td>
+                            <td><?php echo $course_percentage.'%'; ?></td>
+                            <td><?php echo $formatted_date; ?></td>
+                            <td><a href="<?php echo learndash_get_course_certificate_link( $course_id, $user_id ); ?>" target="_blank"><?php echo $download_text; ?></a></td>
+                        </tr>
+                        <?php
                     }
                     ?>     
                     </tbody>               
                 </table>
                 <?php
-                if( $total_data > 10 ) {
+                if( $count_result > 10 ) {
                     ?>
                     <div class="lr-pagination">
-                        <input type="hidden" value="<?php echo $total_count; ?>" class="lr-last-page">
+                        <input type="hidden" value="<?php echo $total_pages; ?>" class="lr-last-page">
                         <span class="dashicons dashicons-controls-skipback lr-skipback"></span>
                         <span class="dashicons dashicons-arrow-left-alt2 lr-less-than"></span>
-                        <span><?php echo $page_number.' out of '.$total_count; ?></span>
+                        <span><?php echo $page_number.' out of '.$total_pages; ?></span>
                         <span class="dashicons dashicons-arrow-right-alt2 lr-greater-than"></span>
                         <span class="dashicons dashicons-controls-skipforward lr-skipforward"></span>
                     </div>
@@ -809,15 +527,136 @@ class Learndash_Reporting {
         echo json_encode( $response );
         wp_die();
     }
+
+    /**
+     * create a function to get query according to condition
+     */
+    public static function lr_get_query( $activity_type, $usermeta_join, $group_meta_key, $group_id, $group_users, $completed_condition, $course_where, $course_id, $pagination = '', $limit = '', $offset = '' ) {
+        
+        global $wpdb;
+        $pagination_condition = '';
+
+        if( 'yes' == $pagination ) {
+            $pagination_condition = 'LIMIT '.$limit.' OFFSET '.$offset;
+        }
+
+        if( 'all-progress' == $activity_type || 'completed' == $activity_type ) {
+
+            $query = $wpdb->prepare(
+                "
+                SELECT 
+                p.post_id AS object_id, 
+                a.* 
+                FROM 
+                ".$wpdb->prefix."postmeta AS p 
+                INNER JOIN 
+                ".$wpdb->prefix."learndash_user_activity AS a
+                $usermeta_join
+                WHERE 
+                p.meta_key = '$group_meta_key'
+                AND a.post_id = $group_id AND a.user_id IN( $group_users ) 
+                $completed_condition
+                $course_where
+                $pagination_condition
+                "
+            );
+        } else if ( 'in-progress' == $activity_type ) {
+
+            $query = $wpdb->prepare(
+                "
+                SELECT course_id as object_id, user_id, activity_started, activity_updated, activity_completed
+                FROM ".$wpdb->prefix."learndash_user_activity
+                WHERE user_id IN ( $group_users ) AND course_id IN ( $course_id )
+                AND activity_started != 0 AND activity_completed = 0 AND activity_type = 'course'
+                $pagination_condition
+                "
+            );
+
+        } else if( 'not-started' == $activity_type ) {
+
+            $in_progress_course_ids = self::lr_group_courses( $group_id );
+            $in_progress_course_ids = implode( ",", $in_progress_course_ids ); 
+
+            $in_progress_query = $wpdb->prepare(
+                "
+                SELECT CONCAT(user_id, '_', course_id) AS user_course_pair
+                FROM ".$wpdb->prefix."learndash_user_activity
+                WHERE user_id IN ( $group_users ) AND course_id IN ( $in_progress_course_ids )
+                AND activity_started != 0 AND activity_completed = 0 AND activity_type = 'course'
+                "
+            );
+
+            $in_progress_data = $wpdb->get_results($in_progress_query);   
+            $in_progress_conditions = [];
+
+            if( ! empty( $in_progress_data ) && is_array( $in_progress_data ) ) {
+                foreach ($in_progress_data as $activity) {
+                    $in_progress_conditions[] = $wpdb->prepare("'%s'", $activity->user_course_pair);
+                }
+            }
+
+            $in_progress_conditions_string = implode(',', $in_progress_conditions);
+
+            $query = $wpdb->prepare(
+                "
+                SELECT 
+                p.post_id AS object_id, 
+                a.user_id AS user_id,
+                a.activity_started AS activity_started,
+                a.activity_updated AS activity_updated,
+                a.activity_completed AS activity_completed
+                FROM 
+                ".$wpdb->prefix."postmeta AS p 
+                INNER JOIN 
+                ".$wpdb->prefix."learndash_user_activity AS a
+                $usermeta_join
+                WHERE 
+                p.meta_key = '$group_meta_key'
+                AND a.post_id = $group_id AND a.user_id IN( $group_users ) 
+                $completed_condition
+                $course_where
+                AND CONCAT(a.user_id, '_', p.post_id) NOT IN ($in_progress_conditions_string)
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM ".$wpdb->prefix."usermeta AS u 
+                    WHERE u.user_id = a.user_id
+                    AND u.meta_key = CONCAT('course_completed_', p.post_id)
+                    )
+                $pagination_condition
+                "
+            );
+        }
+        return $query;
+    }
+
+    /**
+     * create a function to get group courses
+     */
+    public static function lr_group_courses( $group_id ) {
+
+        global $wpdb;
+
+        $meta_key = 'learndash_group_enrolled_'.$group_id;
+        $query = $wpdb->prepare("
+            SELECT post_id 
+            FROM {$wpdb->postmeta} 
+            WHERE meta_key = %s
+            ", $meta_key);
+
+        $group_courses = $wpdb->get_col($query);
+        return $group_courses;
+    }
+
     /**
      * set course according to group
      */
     public function lr_set_course_according_to_group() {
-
+        
         $response = [];
         $group_id = isset( $_POST['group_id'] ) ? intval( $_POST['group_id'] ) : 0;
-        
-        $group_courses = learndash_get_group_courses_list( $group_id );
+
+        $group_courses = self::lr_group_courses( $group_id );
+
         ob_start();
         if( ! empty( $group_courses ) && is_array( $group_courses ) ) {
             ?>
@@ -940,12 +779,6 @@ class Learndash_Reporting {
                                 <div class="lr-group-option" data-group_id="<?php echo $group_id; ?>"><?php echo get_the_title( $group_id ); ?></div>                                
                                 <?php
                             }
-                        } else {
-                            ?>
-                            <div class="lr-select-group-text">
-                                <?php echo __( 'No group found', LR_TEXT_DOMAIN ); ?>
-                            </div>
-                            <?php
                         }
 
                         if( $option_count_result > count( $results ) ) {
@@ -964,7 +797,7 @@ class Learndash_Reporting {
             </div>
             <div class="lr-parent">
                 <select class="lr-filter" <?php echo $disabled; ?>>
-                    <option><?php echo __( 'Select progress', LR_TEXT_DOMAIN ); ?></option>
+                    <option value="all-progress"><?php echo __( 'Select progress', LR_TEXT_DOMAIN ); ?></option>
                     <option value="not-started"><?php echo __( 'Not started', LR_TEXT_DOMAIN ); ?></option>
                     <option value="in-progress"><?php echo __( 'In progress', LR_TEXT_DOMAIN ); ?></option>
                     <option value="completed"><?php echo __( 'Completed', LR_TEXT_DOMAIN ); ?></option>
